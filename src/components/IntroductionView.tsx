@@ -81,7 +81,7 @@ export default function IntroductionView({ onEnter }: IntroductionViewProps) {
           </div>
 
           <p className="text-xs md:text-sm text-gray-400 max-w-lg mx-auto leading-relaxed mt-2">
-            منظومة تدريبية تفاعلية مغلقة ومخصصة لتدريب عناصر وحدة الاستطلاع والتشويش على تشغيل وتوجيه طائرات DJI، والتعامل مع حالات التشويش الإلكتروني وحرب الترددات المعادية.
+            دورة تدريبية تفاعلية مخصصة لتدريب عناصر وحدة الإستطلاع والتشويش
           </p>
         </div>
 
@@ -114,7 +114,8 @@ export default function IntroductionView({ onEnter }: IntroductionViewProps) {
           </span>
         </div>
         <div className="font-mono text-center md:text-right">
-          © جهاز الردع لمكافحة الإرهاب والجريمة المنظمة - 2026
+          <div>© جهاز الردع لمكافحة الإرهاب والجريمة المنظمة - 2026</div>
+          <div className="text-[10px] text-gray-500 mt-1 font-sans">اعداد وتنفيد N126</div>
         </div>
       </div>
 

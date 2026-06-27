@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { Shield, Plane, Radio, Battery, Milestone, Navigation, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Shield, Plane, Radio, Battery, Milestone, Navigation, AlertTriangle, RefreshCw, X } from 'lucide-react';
 
 // Haversine formula to calculate distance between two coordinates in meters
 function getHaversineDistance(coords1: [number, number], coords2: [number, number]): number {
@@ -44,8 +44,31 @@ export default function InteractiveMap() {
   const [straightDistance, setStraightDistance] = useState<number>(0); // in meters
   const [cumulativeDistance, setCumulativeDistance] = useState<number>(0); // in meters
   const [battery, setBattery] = useState<number>(100); // 0-100%
-  const [flightTime, setFlightTime] = useState<number>(0); // in seconds
   const [isReturningToHome, setIsReturningToHome] = useState<boolean>(false);
+
+  // Flight time is calculated as an estimated time based on cumulative distance covered
+  // Assuming a typical DJI drone average speed of 12 meters per second
+  const flightTime = Math.round(cumulativeDistance / 12);
+
+  // Warnings types and states for dismissal
+  const isBatteryLow = battery > 0 && battery <= 25;
+  const isDistanceMaxed = straightDistance >= 3400;
+
+  const currentAlertType = 
+    battery <= 0 ? 'battery_empty' :
+    isDistanceMaxed ? 'distance_maxed' :
+    isBatteryLow ? 'battery_low' :
+    'none';
+
+  const [lastAlertType, setLastAlertType] = useState<'none' | 'battery_empty' | 'distance_maxed' | 'battery_low'>('none');
+  const [isAlertDismissed, setIsAlertDismissed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (currentAlertType !== lastAlertType) {
+      setIsAlertDismissed(false);
+      setLastAlertType(currentAlertType);
+    }
+  }, [currentAlertType, lastAlertType]);
   
   // Leaflet markers & lines stored in refs
   const rcMarkerRef = useRef<L.Marker | null>(null);
@@ -124,12 +147,11 @@ export default function InteractiveMap() {
     tileLayerRef.current.setUrl(url);
   }, [mapLayer, hideLabels]);
 
-  // 3. Flight timer when active
+  // 3. Flight timer when active - handles tiny slow idle battery drain if drone is active
   useEffect(() => {
     if (hasDeployed && battery > 0 && !isReturningToHome) {
       timerRef.current = setInterval(() => {
-        setFlightTime((t) => t + 1);
-        setBattery((b) => Math.max(0, b - 0.1)); // Slow drain over time
+        setBattery((b) => Math.max(0, b - 0.05)); // Slow idle drain over time
       }, 1000);
     } else {
       if (timerRef.current) {
@@ -151,9 +173,10 @@ export default function InteractiveMap() {
     setDroneCoords(coords);
     setHasDeployed(true);
     setBattery(100);
-    setFlightTime(0);
     setStraightDistance(0);
     setCumulativeDistance(0);
+    setIsAlertDismissed(false);
+    setLastAlertType('none');
 
     // Initial point for the polyline
     flightPathPointsRef.current = [coords];
@@ -275,8 +298,9 @@ export default function InteractiveMap() {
     setStraightDistance(0);
     setCumulativeDistance(0);
     setBattery(100);
-    setFlightTime(0);
     setIsReturningToHome(false);
+    setIsAlertDismissed(false);
+    setLastAlertType('none');
   };
 
   // Auto Return To Home (RTH) simulation
@@ -323,10 +347,6 @@ export default function InteractiveMap() {
       }
     }, interval);
   };
-
-  // Warnings
-  const isBatteryLow = battery > 0 && battery <= 25;
-  const isDistanceMaxed = straightDistance >= 3400;
 
   return (
     <div className="flex flex-col h-full bg-[#081c15] text-gray-100 font-sans border border-[#2d6a4f]/30 rounded-lg shadow-2xl overflow-hidden" id="interactive-map-root">
@@ -482,13 +502,23 @@ export default function InteractiveMap() {
           <div className="absolute inset-0 pointer-events-none tactical-grid z-[400] opacity-30" />
 
           {/* Alerts / Tactical Notifications panel */}
-          {(isBatteryLow || isDistanceMaxed || battery <= 0) && (
+          {currentAlertType !== 'none' && !isAlertDismissed && (
             <div className="absolute bottom-4 left-4 right-4 md:right-auto md:w-96 z-[999] bg-[#1a0f0d]/95 border border-red-500/50 rounded-lg p-4 shadow-2xl backdrop-blur-md animate-bounce" id="map-alert-panel">
+              {/* Close Button */}
+              <button 
+                onClick={() => setIsAlertDismissed(true)}
+                className="absolute top-2 left-2 text-red-400 hover:text-red-200 hover:bg-red-950/40 p-1 rounded-full transition cursor-pointer"
+                title="إغلاق التنبيه"
+                id="btn-close-alert"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              
               <div className="flex gap-3">
                 <div className="p-2 rounded bg-red-950/80 border border-red-500/40 text-red-400">
                   <AlertTriangle className="w-5 h-5 animate-pulse" />
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 pr-2">
                   <h4 className="text-xs font-extrabold uppercase tracking-wide text-red-400 mb-1">
                     ⚠️ تحذير تكتيكي طارئ - اللاسلكي والتشويش
                   </h4>
@@ -498,7 +528,7 @@ export default function InteractiveMap() {
                     ) : isDistanceMaxed ? (
                       'تجاوز الحد الأقصى للمسافة المسموحة (3.5 كم)! طاقة بطارية الدرون لن تضمن العودة الآمنة، وقوة الإرسال اللاسلكي RC معرضة لفقدان السيطرة الكلي والتداخل.'
                     ) : (
-                      'بطارية حرجة (أقل من 25%)! بروتوكول سلامة الطيران العسكري يُلزم ببدء إجراءات العودة للمنزل RTH فوراً لتلافي السقوط الاضطراري وخسارة المعدة الجوية.'
+                      'بطارية حرجة (أقل من 25%)! بروتوكول سلامة الطيران العسكري يُلزم ببدء إجراءات العودة الى نقطة الإقلاع RTH فوراً لتلافي السقوط الاضطراري وخسارة المعدة الجوية.'
                     )}
                   </p>
                 </div>
