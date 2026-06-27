@@ -199,6 +199,77 @@ export default function ThreeDViewer() {
     };
     animate();
 
+    // Native Drag and Touch interaction listeners
+    const element = mountRef.current;
+
+    const onMouseDown = (e: MouseEvent) => {
+      isMouseDown.current = true;
+      setIsDragging(true);
+      previousMousePosition.current = {
+        x: e.clientX,
+        y: e.clientY
+      };
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isMouseDown.current || !modelGroupRef.current) return;
+      const deltaMove = {
+        x: e.clientX - previousMousePosition.current.x,
+        y: e.clientY - previousMousePosition.current.y
+      };
+
+      modelGroupRef.current.rotation.y += deltaMove.x * 0.007;
+      modelGroupRef.current.rotation.x += deltaMove.y * 0.007;
+
+      previousMousePosition.current = {
+        x: e.clientX,
+        y: e.clientY
+      };
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 0) return;
+      isMouseDown.current = true;
+      setIsDragging(true);
+      previousMousePosition.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY
+      };
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!isMouseDown.current || !modelGroupRef.current || e.touches.length === 0) return;
+      const deltaMove = {
+        x: e.touches[0].clientX - previousMousePosition.current.x,
+        y: e.touches[0].clientY - previousMousePosition.current.y
+      };
+
+      modelGroupRef.current.rotation.y += deltaMove.x * 0.007;
+      modelGroupRef.current.rotation.x += deltaMove.y * 0.007;
+
+      previousMousePosition.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY
+      };
+    };
+
+    const onDragEnd = () => {
+      isMouseDown.current = false;
+      setIsDragging(false);
+    };
+
+    if (element) {
+      element.addEventListener('mousedown', onMouseDown);
+      element.addEventListener('mousemove', onMouseMove);
+      element.addEventListener('mouseup', onDragEnd);
+      element.addEventListener('mouseleave', onDragEnd);
+
+      element.addEventListener('touchstart', onTouchStart, { passive: true });
+      element.addEventListener('touchmove', onTouchMove, { passive: true });
+      element.addEventListener('touchend', onDragEnd);
+      element.addEventListener('touchcancel', onDragEnd);
+    }
+
     // RESIZE OBSERVER
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0 || !rendererRef.current || !cameraRef.current) return;
@@ -210,13 +281,27 @@ export default function ThreeDViewer() {
       cameraRef.current.aspect = w / h;
       cameraRef.current.updateProjectionMatrix();
     });
-    resizeObserver.observe(mountRef.current);
+    if (mountRef.current) {
+      resizeObserver.observe(mountRef.current);
+    }
 
     return () => {
       cancelAnimationFrame(animationId);
       if (rendererRef.current && mountRef.current) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         mountRef.current.removeChild(rendererRef.current.domElement);
+      }
+      
+      if (element) {
+        element.removeEventListener('mousedown', onMouseDown);
+        element.removeEventListener('mousemove', onMouseMove);
+        element.removeEventListener('mouseup', onDragEnd);
+        element.removeEventListener('mouseleave', onDragEnd);
+
+        element.removeEventListener('touchstart', onTouchStart);
+        element.removeEventListener('touchmove', onTouchMove);
+        element.removeEventListener('touchend', onDragEnd);
+        element.removeEventListener('touchcancel', onDragEnd);
       }
       resizeObserver.disconnect();
     };
@@ -467,6 +552,22 @@ export default function ThreeDViewer() {
         </div>
 
         <div className="flex flex-wrap gap-2 items-center" id="three-d-controls">
+          {/* Upload STL Button at the top */}
+          <label
+            className="px-3 py-1.5 rounded text-xs font-bold bg-[#52b788] text-[#040e0a] hover:bg-[#4ade80] transition flex items-center gap-1.5 cursor-pointer border border-[#52b788] shadow-lg"
+            id="btn-upload-stl-header"
+            title="تحميل ملف STL ثلاثي الأبعاد للفحص"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>تحميل ملف STL</span>
+            <input
+              type="file"
+              accept=".stl"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+
           {/* Theme Toggle */}
           <button
             onClick={() => setThemeMode(themeMode === 'hologram' ? 'solid' : 'hologram')}
@@ -509,10 +610,6 @@ export default function ThreeDViewer() {
         <div className="flex-1 min-h-[300px] lg:min-h-0 relative overflow-hidden" id="canvas-area">
           <div
             ref={mountRef}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUpOrLeave}
-            onMouseLeave={handleMouseUpOrLeave}
             className={`w-full h-full cursor-grab ${isDragging ? 'cursor-grabbing' : ''}`}
             style={{ minHeight: "400px" }}
             id="threejs-canvas"

@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { Shield, Plane, Radio, Battery, Milestone, Navigation, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { Shield, Plane, Radio, Battery, Milestone, Navigation, AlertTriangle, RefreshCw, X, Plus, Minus } from 'lucide-react';
 
 // Haversine formula to calculate distance between two coordinates in meters
 function getHaversineDistance(coords1: [number, number], coords2: [number, number]): number {
@@ -62,6 +62,12 @@ export default function InteractiveMap() {
 
   const [lastAlertType, setLastAlertType] = useState<'none' | 'battery_empty' | 'distance_maxed' | 'battery_low'>('none');
   const [isAlertDismissed, setIsAlertDismissed] = useState<boolean>(false);
+  const [isHudCollapsed, setIsHudCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768; // Start collapsed on mobile to avoid blocking the map
+    }
+    return false;
+  });
 
   useEffect(() => {
     if (currentAlertType !== lastAlertType) {
@@ -78,6 +84,22 @@ export default function InteractiveMap() {
 
   // Timers
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const batteryRef = useRef<number>(100);
+
+  // Keep batteryRef in sync with battery state
+  useEffect(() => {
+    batteryRef.current = battery;
+  }, [battery]);
+
+  // Disable dragging if battery runs out
+  useEffect(() => {
+    if (battery <= 0 && droneMarkerRef.current) {
+      droneMarkerRef.current.dragging?.disable();
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.dragging.enable();
+      }
+    }
+  }, [battery]);
 
   // Tile layer configs
   const tileLayers = {
@@ -223,10 +245,22 @@ export default function InteractiveMap() {
 
     // Handle dragging the drone
     droneMarker.on('dragstart', () => {
+      if (batteryRef.current <= 0) {
+        map.dragging.enable();
+        return false;
+      }
       map.dragging.disable();
     });
 
     droneMarker.on('drag', (e: L.LeafletEvent) => {
+      if (batteryRef.current <= 0) {
+        const marker = e.target as L.Marker;
+        const lastPoint = flightPathPointsRef.current[flightPathPointsRef.current.length - 1];
+        if (lastPoint) {
+          marker.setLatLng(lastPoint);
+        }
+        return;
+      }
       const marker = e.target as L.Marker;
       const currentPos = marker.getLatLng();
       const currentCoords: [number, number] = [currentPos.lat, currentPos.lng];
@@ -267,7 +301,7 @@ export default function InteractiveMap() {
       if (segmentDist > 2) { // Only record significant changes
         flightPathPointsRef.current.push(current);
         setCumulativeDistance((prev) => prev + segmentDist);
-        setBattery((b) => Math.max(0, parseFloat((b - (segmentDist * 0.015)).toFixed(1)))); // Deplete battery based on distance moved
+        setBattery((b) => Math.max(0, parseFloat((b - (segmentDist * 0.0041)).toFixed(2)))); // Deplete battery based on distance moved (calibrated for 30-35 mins max flight time)
         
         if (polylineRef.current) {
           polylineRef.current.setLatLngs(flightPathPointsRef.current);
@@ -427,70 +461,99 @@ export default function InteractiveMap() {
         
         {/* Real-time Tactical HUD overlay */}
         {hasDeployed && (
-          <div className="absolute top-4 right-4 z-[999] bg-[#081c15]/95 border border-[#2d6a4f]/60 rounded p-4 shadow-xl w-64 backdrop-blur-md" id="simulation-hud">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[#52b788] mb-3 border-b border-[#2d6a4f]/40 pb-1.5 flex items-center gap-2">
-              <Navigation className="w-4 h-4" />
-              مؤشرات الطيران الفورية (FPV HUD)
-            </h3>
-
-            <div className="space-y-3" id="hud-metrics">
-              {/* Battery */}
-              <div>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-gray-400">طاقة البطارية الذكية:</span>
-                  <span className={`font-mono font-bold ${isBatteryLow ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
-                    {Math.round(battery)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden border border-gray-800">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-300 ${isBatteryLow ? 'bg-red-500' : 'bg-emerald-500'}`}
-                    style={{ width: `${battery}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Straight line Distance */}
-              <div className="flex justify-between items-center py-1 border-b border-[#1b4332]/50">
-                <span className="text-xs text-gray-400 flex items-center gap-1">
-                  <Radio className="w-3.5 h-3.5 text-[#52b788]" />
-                  المسافة المباشرة:
-                </span>
-                <span className={`font-mono text-xs font-bold ${isDistanceMaxed ? 'text-red-400 animate-pulse' : 'text-gray-200'}`}>
-                  {(straightDistance / 1000).toFixed(2)} كم / 3.50 كم
-                </span>
-              </div>
-
-              {/* Cumulative Flight Trail */}
-              <div className="flex justify-between items-center py-1 border-b border-[#1b4332]/50">
-                <span className="text-xs text-gray-400 flex items-center gap-1">
-                  <Milestone className="w-3.5 h-3.5 text-[#52b788]" />
-                  إجمالي مسار التحليق:
-                </span>
-                <span className="font-mono text-xs font-bold text-gray-200">
-                  {(cumulativeDistance / 1000).toFixed(2)} كم
-                </span>
-              </div>
-
-              {/* Flight Time */}
-              <div className="flex justify-between items-center py-1">
-                <span className="text-xs text-gray-400">زمن التحليق الكلي:</span>
-                <span className="font-mono text-xs font-bold text-[#52b788]">
-                  {Math.floor(flightTime / 60)}د {flightTime % 60}ث
-                </span>
-              </div>
-
-              {/* Return to Home autopilot trigger */}
+          <div 
+            className={`absolute top-4 right-4 z-[999] bg-[#081c15]/95 border border-[#2d6a4f]/60 rounded-lg shadow-xl backdrop-blur-md transition-all duration-300 ${
+              isHudCollapsed ? 'w-auto p-2' : 'w-64 p-4'
+            }`} 
+            id="simulation-hud"
+          >
+            {isHudCollapsed ? (
               <button
-                disabled={isReturningToHome || battery <= 0}
-                onClick={initiateRTH}
-                className="w-full mt-2 py-1.5 px-3 bg-[#1b4332] hover:bg-[#2d6a4f] disabled:bg-gray-800 disabled:text-gray-600 disabled:border-gray-700 text-emerald-100 text-xs font-bold rounded border border-[#52b788]/40 transition flex items-center justify-center gap-2"
-                id="btn-hud-rth"
+                onClick={() => setIsHudCollapsed(false)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#1b4332] hover:bg-[#2d6a4f] text-[#52b788] text-xs font-bold rounded border border-[#52b788]/40 transition cursor-pointer"
+                id="btn-expand-hud"
+                title="عرض مؤشرات الطيران"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isReturningToHome ? 'animate-spin' : ''}`} />
-                {isReturningToHome ? 'جاري العودة التلقائية...' : 'تفعيل العودة التلقائية (RTH)'}
+                <Plus className="w-4 h-4" />
+                <span>مؤشرات الطيران [+]</span>
               </button>
-            </div>
+            ) : (
+              <>
+                <div className="flex justify-between items-center mb-3 border-b border-[#2d6a4f]/40 pb-1.5">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#52b788] flex items-center gap-2">
+                    <Navigation className="w-4 h-4 animate-pulse" />
+                    مؤشرات الطيران الفورية (HUD)
+                  </h3>
+                  <button
+                    onClick={() => setIsHudCollapsed(true)}
+                    className="p-1 rounded bg-gray-800/80 hover:bg-gray-700 text-gray-400 hover:text-white transition cursor-pointer"
+                    title="تصغير"
+                    id="btn-collapse-hud"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="space-y-3" id="hud-metrics">
+                  {/* Battery */}
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-400">طاقة البطارية الذكية:</span>
+                      <span className={`font-mono font-bold ${battery <= 0 ? 'text-red-500 animate-bounce' : isBatteryLow ? 'text-red-400 animate-pulse' : 'text-emerald-400'}`}>
+                        {battery <= 0 ? '0% (سقطت!)' : `${Math.round(battery)}%`}
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden border border-gray-800">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-300 ${battery <= 0 ? 'bg-red-700' : isBatteryLow ? 'bg-red-500' : 'bg-emerald-500'}`}
+                        style={{ width: `${battery}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Straight line Distance */}
+                  <div className="flex justify-between items-center py-1 border-b border-[#1b4332]/50">
+                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                      <Radio className="w-3.5 h-3.5 text-[#52b788]" />
+                      المسافة المباشرة:
+                    </span>
+                    <span className={`font-mono text-xs font-bold ${isDistanceMaxed ? 'text-red-400 animate-pulse' : 'text-gray-200'}`}>
+                      {(straightDistance / 1000).toFixed(2)} كم / 3.50 كم
+                    </span>
+                  </div>
+
+                  {/* Cumulative Flight Trail */}
+                  <div className="flex justify-between items-center py-1 border-b border-[#1b4332]/50">
+                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                      <Milestone className="w-3.5 h-3.5 text-[#52b788]" />
+                      إجمالي مسار التحليق:
+                    </span>
+                    <span className="font-mono text-xs font-bold text-gray-200">
+                      {(cumulativeDistance / 1000).toFixed(2)} كم
+                    </span>
+                  </div>
+
+                  {/* Flight Time */}
+                  <div className="flex justify-between items-center py-1">
+                    <span className="text-xs text-gray-400">زمن التحليق الكلي:</span>
+                    <span className="font-mono text-xs font-bold text-[#52b788]">
+                      {Math.floor(flightTime / 60)}د {flightTime % 60}ث
+                    </span>
+                  </div>
+
+                  {/* Return to Home autopilot trigger */}
+                  <button
+                    disabled={isReturningToHome || battery <= 0}
+                    onClick={initiateRTH}
+                    className="w-full mt-2 py-1.5 px-3 bg-[#1b4332] hover:bg-[#2d6a4f] disabled:bg-gray-800 disabled:text-gray-600 disabled:border-gray-700 text-emerald-100 text-xs font-bold rounded border border-[#52b788]/40 transition flex items-center justify-center gap-2 cursor-pointer"
+                    id="btn-hud-rth"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReturningToHome ? 'animate-spin' : ''}`} />
+                    {isReturningToHome ? 'جاري العودة التلقائية...' : 'تفعيل العودة التلقائية (RTH)'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -502,17 +565,19 @@ export default function InteractiveMap() {
           <div className="absolute inset-0 pointer-events-none tactical-grid z-[400] opacity-30" />
 
           {/* Alerts / Tactical Notifications panel */}
-          {currentAlertType !== 'none' && !isAlertDismissed && (
+          {currentAlertType !== 'none' && (currentAlertType === 'battery_empty' || !isAlertDismissed) && (
             <div className="absolute bottom-4 left-4 right-4 md:right-auto md:w-96 z-[999] bg-[#1a0f0d]/95 border border-red-500/50 rounded-lg p-4 shadow-2xl backdrop-blur-md animate-bounce" id="map-alert-panel">
               {/* Close Button */}
-              <button 
-                onClick={() => setIsAlertDismissed(true)}
-                className="absolute top-2 left-2 text-red-400 hover:text-red-200 hover:bg-red-950/40 p-1 rounded-full transition cursor-pointer"
-                title="إغلاق التنبيه"
-                id="btn-close-alert"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              {currentAlertType !== 'battery_empty' && (
+                <button 
+                  onClick={() => setIsAlertDismissed(true)}
+                  className="absolute top-2 left-2 text-red-400 hover:text-red-200 hover:bg-red-950/40 p-1 rounded-full transition cursor-pointer"
+                  title="إغلاق التنبيه"
+                  id="btn-close-alert"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
               
               <div className="flex gap-3">
                 <div className="p-2 rounded bg-red-950/80 border border-red-500/40 text-red-400">
@@ -524,7 +589,7 @@ export default function InteractiveMap() {
                   </h4>
                   <p className="text-xs text-red-200 leading-relaxed font-semibold">
                     {battery <= 0 ? (
-                      'عاجل: نفاد كامل للطاقة! سقطت طائرة الاستطلاع اضطرارياً وفُقدت الإشارة تماماً في آخر إحداثيات مرصودة.'
+                      'لقد تم فقدان الطائرة وسقوطها! نفاد كامل لبطارية الطائرة التكتيكية نتيجة تجاوز زمن ومسافة الأمان المحددة للطيران دون الانتباه للتحذيرات. يرجى إعادة تعيين المحاكاة من الزر بالأعلى لتصحيح الخطأ والمحاولة مجدداً.'
                     ) : isDistanceMaxed ? (
                       'تجاوز الحد الأقصى للمسافة المسموحة (3.5 كم)! طاقة بطارية الدرون لن تضمن العودة الآمنة، وقوة الإرسال اللاسلكي RC معرضة لفقدان السيطرة الكلي والتداخل.'
                     ) : (
